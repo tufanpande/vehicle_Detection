@@ -13,7 +13,7 @@ model = VGG16(weights='imagenet', include_top=False, pooling='avg')
 
 # Function to check if the file is an image
 def is_image_file(filename):
-    return filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif'))
+    return filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')) and not filename.startswith('.')
 
 # Function to extract features from images using VGG16
 def extract_features(image_path):
@@ -41,10 +41,11 @@ def load_dataset(data_dir):
 
         for img_file in os.listdir(label_dir):  # Loop through files in each folder
             if not is_image_file(img_file):
+                print(f"Skipping non-image file: {img_file}")
                 continue  # Skip non-image files
 
             img_path = os.path.join(label_dir, img_file)
-            print(f"Processing image: {img_path}")
+            print(f"Processing image: {img_path}")  # Debugging line
             feature = extract_features(img_path)
             if feature is not None:  # Only append valid features
                 features.append(feature)
@@ -99,10 +100,10 @@ def detect_vehicles(image_path, model, svm_classifier, step_size=128, scale_fact
     original_image = image.copy()
     vehicle_count = defaultdict(int)
     boxes = []
-    confidence_scores = []
 
     for scale in scale_factors:
         resized_image = cv2.resize(image, (int(image.shape[1] * scale), int(image.shape[0] * scale)))
+        
         for (x, y, window) in sliding_window(resized_image, step_size, (224, 224)):
             if window.shape[0] != 224 or window.shape[1] != 224:
                 continue
@@ -116,28 +117,41 @@ def detect_vehicles(image_path, model, svm_classifier, step_size=128, scale_fact
 
             # Predict the type of vehicle using the SVM classifier
             prediction = svm_classifier.predict([features])[0]
-            confidence = svm_classifier.decision_function([features])[0]
-            
+            confidence_scores = svm_classifier.decision_function([features])[0]
+
             # Only accept predictions with a high confidence
-            if confidence > confidence_threshold:
-                print(f"Predicted label: {prediction} with confidence: {confidence}")
+            if confidence_scores.max() > confidence_threshold:
+                print(f"Predicted label: {prediction} with confidence: {confidence_scores.max()}")
                 boxes.append([int(x / scale), int(y / scale), int((x + 224) / scale), int((y + 224) / scale)])
-                confidence_scores.append(confidence)
-
                 vehicle_count[prediction] += 1
-                # Draw bounding box and label
-                cv2.rectangle(original_image, (int(x / scale), int(y / scale)), (int((x + 224) / scale), int((y + 224) / scale)), (0, 255, 0), 2)
-                cv2.putText(original_image, prediction, (int(x / scale), int(y / scale) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+                
+                # Draw bounding box and label on the original image
+                cv2.rectangle(original_image,
+                              (int(x / scale), int(y / scale)),
+                              (int((x + 224) / scale), int((y + 224) / scale)),
+                              (0, 255, 0),
+                              2)
+                cv2.putText(original_image,
+                            prediction,
+                            (int(x / scale), int(y / scale) - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.9,
+                            (255, 0, 0),
+                            2)
 
-    # Convert boxes to NumPy array for NMS
+    # Convert boxes to NumPy array for NMS and apply NMS
     boxes = np.array(boxes)
     if len(boxes) > 0:
         picked_boxes = non_max_suppression_with_iou(boxes)
 
-        # Draw only the picked boxes after NMS
+        # Draw only the picked boxes after NMS on the original image
         for i in picked_boxes:
             box = boxes[i]
-            cv2.rectangle(original_image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+            cv2.rectangle(original_image,
+                          (box[0], box[1]),
+                          (box[2], box[3]),
+                          (0, 255, 0),
+                          2)
 
     # Save the image with detected vehicles
     output_image_path = "detected_vehicles_output.jpg"
@@ -158,12 +172,14 @@ if __name__ == "__main__":
     # Split the dataset into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Train the SVM classifier
-    svm_classifier = svm.SVC(kernel='linear', C=1.0, probability=True)  # Enable probability for confidence
+    # Train the SVM classifier with hyperparameter tuning if necessary.
+    svm_classifier = svm.SVC(kernel='rbf', C=10.0, probability=True)  
     svm_classifier.fit(X_train, y_train)
 
     # Detect vehicles in a new image
-    image_path = '../thumb.jpeg'  # Example real-time photo path
+    image_path = '../1726231176_Durghatna-1200x560-wm.jpg'  # Example real-time photo path; update as needed.
+    
     detected_vehicles, output_image = detect_vehicles(image_path, model, svm_classifier)
+    
     print(f"Number of vehicles detected: {detected_vehicles}")
     print(f"Processed image saved to: {output_image}")
